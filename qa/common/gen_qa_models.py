@@ -1028,6 +1028,7 @@ def create_libtorch_modelfile(
     output1_dtype,
     swap=False,
 ):
+    print("<<<< create_libtorch_modelfile >>>>", flush=True)
     if not tu.validate_for_libtorch_model(
         input_dtype,
         output0_dtype,
@@ -1283,6 +1284,61 @@ def create_libtorch_modelfile(
     traced.save(model_version_dir + "/model.pt")
 
 
+def create_libtorch2_modelfile(
+    models_dir,
+    max_batch,
+    model_version,
+    input_shape,
+    output0_shape,
+    output1_shape,
+    input_dtype,
+    output0_dtype,
+    output1_dtype,
+    swap=False,
+):
+    print("<<<< create_libtorch2_modelfile >>>>", flush=True)
+    if not tu.validate_for_libtorch_model(
+        input_dtype,
+        output0_dtype,
+        output1_dtype,
+        input_shape,
+        output0_shape,
+        output1_shape,
+        max_batch,
+    ):
+        return
+
+    model_name = tu.get_model_name(
+        "libtorch2",
+        input_dtype,
+        output0_dtype,
+        output1_dtype,
+    )
+    # handle for -1 (when variable) since can't create tensor with shape of [-1]
+    input_shape = [abs(ips) for ips in input_shape]
+
+    model_version_dir = models_dir + "/" + model_name + "/" + str(model_version)
+
+    try:
+        os.makedirs(model_version_dir)
+    except OSError:
+        pass  # ignore existing dir
+
+    class AddSubNet2(nn.Module):
+        def __init__(self, swap):
+            self.swap = swap
+            super(AddSubNet2, self).__init__()
+        def forward(self, INPUT0, INPUT1):
+            op0 = (INPUT0 - INPUT1) if self.swap else (INPUT0 + INPUT1)
+            op1 = (INPUT0 + INPUT1) if self.swap else (INPUT0 - INPUT1)
+            return op0, op1
+
+    ep = torch.export.export(
+        AddSubNet2(swap), (torch.randn(*input_shape), torch.randn(*input_shape))
+    )
+    torch.export.save(ep, model_version_dir + "/model.pt2")
+
+
 def create_libtorch_modelconfig(
     models_dir,
     max_batch,
@@ -1296,6 +1352,7 @@ def create_libtorch_modelconfig(
     output0_label_cnt,
     version_policy,
 ):
+    print("<<<< create_libtorch_modelconfig >>>>", flush=True)
     if not tu.validate_for_libtorch_model(
         input_dtype,
         output0_dtype,
@@ -1328,7 +1385,7 @@ def create_libtorch_modelconfig(
     config_dir = models_dir + "/" + model_name
     config = """
 name: "{}"
-platform: "pytorch_libtorch"
+platform: "{}"
 max_batch_size: {}
 version_policy: {}
 input [
@@ -1358,6 +1415,111 @@ output [
 ]
 """.format(
         model_name,
+        "pytorch_libtorch",
+        max_batch,
+        version_policy_str,
+        np_to_model_dtype(input_dtype),
+        tu.shape_to_dims_str(input_shape),
+        np_to_model_dtype(input_dtype),
+        tu.shape_to_dims_str(input_shape),
+        np_to_model_dtype(output0_dtype),
+        tu.shape_to_dims_str(output0_shape),
+        np_to_model_dtype(output1_dtype),
+        tu.shape_to_dims_str(output1_shape),
+    )
+
+    try:
+        os.makedirs(config_dir)
+    except OSError as ex:
+        pass  # ignore existing dir
+
+    with open(config_dir + "/config.pbtxt", "w") as cfile:
+        cfile.write(config)
+
+    with open(config_dir + "/output0_labels.txt", "w") as lfile:
+        for l in range(output0_label_cnt):
+            lfile.write("label" + str(l) + "\n")
+
+
+def create_libtorch2_modelconfig(
+    models_dir,
+    max_batch,
+    model_version,
+    input_shape,
+    output0_shape,
+    output1_shape,
+    input_dtype,
+    output0_dtype,
+    output1_dtype,
+    output0_label_cnt,
+    version_policy,
+):
+    print("<<<< create_libtorch2_modelconfig >>>>", flush=True)
+    if max_batch <= 0:
+        raise ValueError("libtorch2 model must have max_batch > 0")
+    if not tu.validate_for_libtorch_model(
+        input_dtype,
+        output0_dtype,
+        output1_dtype,
+        input_shape,
+        output0_shape,
+        output1_shape,
+        max_batch,
+    ):
+        return
+
+    # Unpack version policy
+    version_policy_str = "{ latest { num_versions: 1 }}"
+    if version_policy is not None:
+        type, val = version_policy
+        if type == "latest":
+            version_policy_str = "{{ latest {{ num_versions: {} }}}}".format(val)
+        elif type == "specific":
+            version_policy_str = "{{ specific {{ versions: {} }}}}".format(val)
+        else:
+            version_policy_str = "{ all { }}"
+
+    # Use a different model name for the non-batching variant
+    model_name = tu.get_model_name(
+        "libtorch2",
+        input_dtype,
+        output0_dtype,
+        output1_dtype,
+    )
+    config_dir = models_dir + "/" + model_name
+    config = """
+name: "{}"
+platform: "{}"
+max_batch_size: {}
+version_policy: {}
+input [
+  {{
+    name: "INPUT0"
+    data_type: {}
+    dims: [ {} ]
+  }},
+  {{
+    name: "INPUT1"
+    data_type: {}
+    dims: [ {} ]
+  }}
+]
+output [
+  {{
+    name: "OUTPUT__0"
+    data_type: {}
+    dims: [ {} ]
+    label_filename: "output0_labels.txt"
+  }},
+  {{
+    name: "OUTPUT__1"
+    data_type: {}
+    dims: [ {} ]
+  }}
+]
+""".format(
+        model_name,
+        "pytorch2_libtorch",
         max_batch,
         version_policy_str,
         np_to_model_dtype(input_dtype),
@@ -1706,6 +1868,7 @@ def create_models(
             output0_label_cnt,
             version_policy,
         )
+        # For libtorch2 backend, only create the model file once
         create_libtorch_modelfile(
             models_dir,
             8,
@@ -1734,6 +1897,33 @@ def create_models(
         create_libtorch_modelfile(
             models_dir,
             0,
+            model_version,
+            input_shape,
+            output0_shape,
+            output1_shape,
+            input_dtype,
+            output0_dtype,
+            output1_dtype,
+        )
+
+    if FLAGS.libtorch2:
+        # max-batch 8
+        create_libtorch2_modelconfig(
+            models_dir,
+            8,
+            model_version,
+            input_shape,
+            output0_shape,
+            output1_shape,
+            input_dtype,
+            output0_dtype,
+            output1_dtype,
+            output0_label_cnt,
+            version_policy,
+        )
+        create_libtorch2_modelfile(
+            models_dir,
+            8,
             model_version,
             input_shape,
             output0_shape,
@@ -1934,6 +2124,12 @@ if __name__ == "__main__":
         help="Generate Pytorch LibTorch models",
     )
     parser.add_argument(
+        "--libtorch2",
+        required=False,
+        action="store_true",
+        help="Generate Pytorch LibTorch models using PT2",
+    )
+    parser.add_argument(
         "--openvino",
         required=False,
         action="store_true",
@@ -1959,7 +2155,7 @@ if __name__ == "__main__":
         import tensorrt as trt
     if FLAGS.onnx:
         import onnx
-    if FLAGS.libtorch:
+    if FLAGS.libtorch or FLAGS.libtorch2:
         import torch
         from torch import nn
     if FLAGS.openvino:
@@ -2116,6 +2312,7 @@ if __name__ == "__main__":
                 create_onnx_modelfile(
                     FLAGS.models_dir, 0, 3, (16,), (16,), (16,), vt, vt, vt, swap=True
                 )
+
         if FLAGS.libtorch:
             for vt in [np.float32, np.int32, np.int16, np.int8]:
                 create_libtorch_modelfile(
@@ -2130,6 +2327,22 @@ if __name__ == "__main__":
                 create_libtorch_modelfile(
                     FLAGS.models_dir, 0, 3, (16,), (16,), (16,), vt, vt, vt, swap=True
                 )
+
+        if FLAGS.libtorch2:
+            for vt in [np.float32, np.int32, np.int16, np.int8]:
+                create_libtorch2_modelfile(
+                    FLAGS.models_dir, 8, 2, (16,), (16,), (16,), vt, vt, vt, swap=True
+                )
+                create_libtorch2_modelfile(
+                    FLAGS.models_dir, 8, 3, (16,), (16,), (16,), vt, vt, vt, swap=True
+                )
+                create_libtorch2_modelfile(
+                    FLAGS.models_dir, 0, 2, (16,), (16,), (16,), vt, vt, vt, swap=True
+                )
+                create_libtorch2_modelfile(
+                    FLAGS.models_dir, 0, 3, (16,), (16,), (16,), vt, vt, vt, swap=True
+                )
+
         if FLAGS.openvino:
             for vt in [np.float16, np.float32, np.int8, np.int16, np.int32]:
                 create_openvino_modelfile(
