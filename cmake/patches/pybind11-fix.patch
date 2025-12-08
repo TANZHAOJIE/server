@@ -1,0 +1,13 @@
+﻿diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 7db1bf66..c8fdefbc 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -30,7 +30,7 @@ endif()
+ if(DEFINED PYBIND11_MASTER_PROJECT)
+   return()
+ endif()
+-
++set(PYBIND11_FINDPYTHON ON)
+ # Extract project version from source
+ file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/include/pybind11/detail/common.h"
+      pybind11_version_defines REGEX "#define PYBIND11_VERSION_(MAJOR|MINOR|PATCH) ")

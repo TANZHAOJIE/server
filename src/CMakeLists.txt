@@ -139,6 +139,12 @@ if(WIN32)
       ${B64_LIBRARY}
   )
 
+  target_link_libraries(
+    main
+    PRIVATE
+    triton-common-json
+  )
+
 else()
 
   target_compile_options(

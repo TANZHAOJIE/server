@@ -73,7 +73,7 @@ import requests
 DEFAULT_TRITON_VERSION_MAP = {
     "release_version": "2.64.0dev",
     "triton_container_version": "25.11dev",
-    "upstream_container_version": "25.11",
+    "upstream_container_version": "25.11dev",
     "ort_version": "1.23.2",
     "ort_openvino_version": "2025.3.0",
     "standalone_openvino_version": "2025.3.0",
@@ -222,6 +222,14 @@ class BuildScript:
             self.blankln()
             if self._verbose:
                 self._file.write("Set-PSDebug -Trace 1\n")
+            self.blankln()
+            # 显式将当前进程环境变量写入 PowerShell 环境，确保 cmake 脚本中 ${env:VAR} 有值
+            for _env in ("TRT_VERSION", "CMAKE_TOOLCHAIN_FILE", "VCPKG_TARGET_TRIPLET"):
+                val = os.getenv(_env)
+                if val is not None:
+                    # PowerShell 里用双引号包裹路径并对反斜杠保持字面值
+                    safe_val = val.replace('"', '`"')
+                    self._file.write(f'$env:{_env} = "{safe_val}"\n')
             self.blankln()
             self._file.write("try {\n")
         else:
@@ -901,7 +909,7 @@ RUN curl -o /tmp/cuda-keyring.deb \\
 ENV DCGM_VERSION {}
 # Install DCGM. Steps from https://developer.nvidia.com/dcgm#Downloads
 RUN curl -o /tmp/cuda-keyring.deb \\
-          https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \\
+          https://developer.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \\
       && apt install /tmp/cuda-keyring.deb \\
       && rm /tmp/cuda-keyring.deb \\
       && apt update \\
@@ -1311,7 +1319,7 @@ ENV UCX_MEM_EVENTS no
     # Necessary for libtorch.so to find correct HPCX libraries
     if "pytorch" in backends:
         df += """
-ENV LD_LIBRARY_PATH /opt/hpcx/ucc/lib/:/opt/hpcx/ucx/lib/:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH /opt/hpcx/ucc/lib/:/opt/hpcx/ucx/lib/:${{LD_LIBRARY_PATH}}
 """
 
     backend_dependencies = ""
